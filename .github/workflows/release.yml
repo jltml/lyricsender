@@ -24,7 +24,7 @@ jobs:
           # Optional, will be determined automatically
           revision: ${{github.sha}}
           # Optional, if don't want to check for already open PRs
-          force: false # true
+          force: true
   rubygems:
     runs-on: ubuntu-latest
     steps:
