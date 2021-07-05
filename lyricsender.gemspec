@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name        = 'lyricsender'
-  s.version     = '0.1.0'
+  s.version     = '0.1.1'
   s.summary     = "Send lyrics, line-by-line, using iMessage"
   s.description = "This gem is a CLI that uses the Genius API and web scraping to rapid-fire send your friends the lyrics to a song. Which is not at all annoying."
   s.authors     = ["Jack MapelLentz"]

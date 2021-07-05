@@ -10,7 +10,8 @@ Uhhhhhhh…
 
 ## Installation
 
-(coming soon; for now `git clone` the repo, then `gem build` and `gem install lyricsender-0.1.0.gem`)
+- **Using [Homebrew](https://brew.sh)**: `brew install jltml/tap/lyricsender`
+- **Using [RubyGems](https://rubygems.org/gems/lyricsender)**: `gem install lyricsender`
 
 ## Usage
 

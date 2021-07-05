@@ -14,7 +14,7 @@ require 'nokogiri'
 
 module Lyricsender
 
-  VERSION = "0.1.0"
+  VERSION = "0.1.1"
 
   module CLI
     module Commands
@@ -235,6 +235,11 @@ module Lyricsender
 
     end
   end
+end
+
+if ARGV.include? "help"
+  ARGV.delete "help"
+  ARGV << "--help"
 end
 
 # Sets "send" to be the default command, basically
