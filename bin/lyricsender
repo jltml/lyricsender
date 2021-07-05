@@ -1,0 +1,245 @@
+#!/usr/bin/env ruby
+
+require 'bundler/setup'
+require 'open-uri'
+require 'dry/cli'
+require 'os'
+require 'imessage'
+require 'tty-config'
+require 'tty-progressbar'
+require 'tty-prompt'
+require 'genius'
+require 'launchy'
+require 'nokogiri'
+
+module Lyricsender
+
+  VERSION = "0.1.0"
+
+  module CLI
+    module Commands
+      extend Dry::CLI::Registry
+
+      class Version < Dry::CLI::Command
+        desc "Print version"
+
+        def call(*)
+          puts "lyricsender v#{Lyricsender::VERSION}"
+        end
+      end
+
+      class Setup < Dry::CLI::Command
+        desc "Initial setup for lyricsender"
+
+        def call(*)
+
+          ### warning - This part is duplicated and I cannot figure out how to fix it
+          # Supports https://no-color.org
+          env_no_color = false if ENV['NO_COLOR']
+
+          pastel = Pastel.new(enabled: env_no_color)
+          config = TTY::Config.new
+          prompt = TTY::Prompt.new(enable_color: env_no_color)
+
+          config.filename = "lyricsender"
+          config.extname = ".toml"
+          config_append_path = "#{Dir.home}/.config"
+          config.append_path config_append_path
+
+          unless OS.mac?
+            puts
+            print pastel.bold.red "(!) Note: only macOS is supported"
+            puts pastel.red " (this uses iMessage and AppleScript)."
+            if prompt.yes? "Continue anyway?"
+              nil
+            else
+              exit 1
+            end
+          end
+          ### end duplicated part
+
+          if !config.exist?
+            puts
+            puts pastel.bold "Hi, welcome to lyricsender!"
+            puts "You'll need an access token from Genius to use this."
+            if prompt.yes? "Open genius.com/api-clients to create one?"
+              Launchy.open "http://genius.com/api-clients"
+            end
+            set_token = prompt.ask("Please paste your #{pastel.bold "client access token"} here and press enter:", convert: :str, required: true)
+            config.set(:token, value: set_token)
+            puts "Perfect; writing to `#{config_append_path}/#{config.filename}#{config.extname}`…"
+            config.write
+            print pastel.bold.green "Setup complete!"
+            puts pastel.green " You can now run `lyricsender send` to send something."
+          else
+            puts pastel.red "Looks like you're already set up!"
+            puts pastel.dim "(Your config file is located at #{config_append_path}/#{config.filename}#{config.extname})"
+            exit 1
+          end
+
+        end
+      end
+
+      class Send < Dry::CLI::Command
+        desc "Send a song's lyrics, line by line, to one or more recipients (default task when running lyricsender without any arguments/options)"
+        option :search, desc: "Which song/search query to look up on Genius (optional)"
+        option :song, desc: "Which search result to accept from Genius; must be in the form 'Song Name - Artist' (optional)"
+        option :to, desc: "The song's recipient — phone number or email (optional)"
+        option :delay, desc: "If set to 'true', lyricsender will prompt for approval between sending each line; if set to an integer, seconds to wait between sending each message; if set to 'false' (the default), it won't delay between messages (optional)"
+        option :yes, desc: "Send messages without prompting for approval at the beginning (also optional)", type: :boolean, default: false
+
+        def call(**options)
+
+          ### warning - This part is duplicated and I cannot figure out how to fix it
+          # Supports https://no-color.org
+          env_no_color = false if ENV['NO_COLOR']
+
+          pastel = Pastel.new(enabled: env_no_color)
+          config = TTY::Config.new
+          prompt = TTY::Prompt.new(enable_color: env_no_color)
+
+          config.filename = "lyricsender"
+          config.extname = ".toml"
+          config_append_path = "#{Dir.home}/.config"
+          config.append_path config_append_path
+
+          unless OS.mac?
+            puts
+            print pastel.bold.red "(!) Note: only macOS is supported"
+            puts pastel.red " (this uses iMessage and AppleScript)."
+            if prompt.yes? "Continue anyway?"
+              nil
+            else
+              exit 1
+            end
+          end
+          ### end duplicated part
+
+          unless config.exist?
+            puts pastel.red "Oops, you need to run the setup command first"
+            puts pastel.red "(this script requires an access key from Genius)"
+            puts pastel.bold.red "Try running `lyricsender setup`. Thanks!"
+            exit 1
+          end
+
+          Genius.access_token = config.read["token"]
+
+          begin
+            search = options.fetch(:search)
+          rescue
+            search = prompt.ask("#{pastel.bold "→ Search for a song…"}", convert: :str, required: true)
+          end
+
+          songs = Genius::Song.search search
+          songs_list = Hash.new
+          songs.each do |song|
+            songs_list["#{song.title} - #{song.primary_artist.name}"] = song.url
+          end
+
+          begin
+            song = options.fetch(:song)
+          rescue
+            nil
+          end
+
+          unless song
+            song = prompt.select("#{pastel.bold "→ Please choose a song:"}", songs_list.keys)
+          end
+          song_url = songs_list[song]
+
+          begin
+            to = options.fetch(:to).split(" ")
+          rescue
+            to = prompt.ask("#{pastel.bold "→ Please enter one or more recipients"} (phone numbers or email addresses), separated by commas…", convert: :array, required: true)
+          end
+
+          begin
+            delay = options.fetch(:delay)
+          rescue
+            choices = {"no delay between messages": false, "prompt between sending messages": true, "choose a time to delay": nil}
+            delay = prompt.select("#{pastel.bold "→ Would you like to wait between sending messages?"}", choices)
+            if delay.nil?
+              delay = prompt.ask("#{pastel.bold "→ How many seconds would you like to wait between messages?"}", convert: :int, required: true)
+            end
+          end
+
+          doc = Nokogiri::HTML(URI.open(song_url.to_s))
+          lyrics = Array.new
+          doc.css('div[class^="Lyrics__Container-"], div[class*=" Lyrics__Container-"]').each do |match|
+            # The following line removes newlines and the lines that are like [Intro] and [Verse 1] etc
+            lyric_block = Nokogiri::HTML(match.to_s.gsub("<br>", "\n").gsub(/\[.*\]$/i, "").gsub("[Intro]", "")).content.gsub(/\n+|\r+/, "\n").squeeze("\n").strip
+            lyric_block.each_line do |line|
+              lyrics << line
+            end
+          end
+
+          if lyrics.length == 0
+            puts pastel.red "The song you chose appears to be empty…"
+            exit 1
+          end
+
+          begin
+            yes = options.fetch(:yes)
+          rescue
+            yes = false
+          end
+
+          unless yes
+            puts pastel.italic.dim "Here's what will be sent:"
+            lyrics.each do |line|
+              puts "  #{line}"
+            end
+            yes = prompt.yes? "#{pastel.bold "→ Send"} #{pastel.underline.bold song} #{pastel.bold "to"} #{pastel.underline.bold to.join(",")} (#{lyrics.length} messages)?"
+          end
+
+          if yes
+            sender = Imessage::Sender.new
+            counter = 0
+            bar = TTY::ProgressBar.new("sending… [:bar] :current/:total • :eta", total: lyrics.length, bar_format: :box, clear: true) unless delay == true
+            lyrics.each_with_index do |line, index|
+              send_line = true
+              if delay == true
+                if prompt.yes? "(#{index + 1}/#{lyrics.length}) Send line #{pastel.italic line.strip}?"
+                  nil
+                else
+                  send_line = false
+                  print pastel.bold.red "Line not sent"
+                  puts pastel.red " (continuing to next line)"
+                end
+              elsif delay.is_a? Integer
+                sleep delay
+              end
+              if send_line
+                sender.deliver({
+                  # The gsub below replaces single quotes like those in contractions with '"'"' because the iMessage gem shells out to `oascript` to send messages and the single quotes otherwise mess up that part ('"'"' is interpreted as just ')
+                  text: line.gsub('\'', '\'"\'"\'').strip,
+                  contacts: to
+                })
+                counter += 1
+                bar.advance if bar
+              end
+            end
+            print pastel.bold.green "Success"
+            puts pastel.green " (probably)! #{counter} messages sent."
+          else
+            puts pastel.bold.italic.red "Messages not sent."
+            exit 1
+          end
+        end
+
+      end
+
+      register "version", Version, aliases: ["v", "-v", "--version"]
+      register "setup", Setup
+      register "send", Send
+
+    end
+  end
+end
+
+# Sets "send" to be the default command, basically
+if ARGV.empty?
+  ARGV << "send"
+end
+
+Dry::CLI.new(Lyricsender::CLI::Commands).call
